@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pokémon GO damage formulas: PvP and raids/gyms</title>
+<style>
+:root{--fg:#1f2328;--bg:#fff;--line:#d1d9e0;--code:#f6f8fa}
+@media (prefers-color-scheme:dark){:root{--fg:#e6edf3;--bg:#0d1117;--line:#3d444d;--code:#161b22}}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+main{max-width:900px;margin:0 auto;padding:32px 16px 64px}
+h1{font-size:1.9em;border-bottom:1px solid var(--line);padding-bottom:.3em} h2{font-size:1.45em;border-bottom:1px solid var(--line);padding-bottom:.3em;margin-top:2em} h3{font-size:1.15em;margin-top:1.6em}
+code{font:85% ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--code);padding:.15em .35em;border-radius:5px}
+pre{background:var(--code);border-radius:6px;overflow-x:auto;padding:12px 14px;line-height:1.45} pre code{background:none;padding:0;font-size:83%}
+table{border-collapse:collapse;display:block;overflow-x:auto;margin:12px 0} th,td{border:1px solid var(--line);padding:5px 10px;vertical-align:top} th{background:var(--code);text-align:left}
+</style></head><body><main>
+<h1>Pokémon GO damage formulas: PvP and raids/gyms</h1>
+<p>PvP damage is <code>floor(0.5 × Power × Atk / Def × Charge × Effectiveness × STAB × Shadow × Purified) + 1</code>. Atk includes a 1.3 bonus and the attack stat stage. Def includes the defense stat stage. Raid and gym damage is <code>floor(0.5 × Power × Atk / Def × Effectiveness × Friendship × STAB × Weather × Shadow × Purified × Mega × Party × Remote + 1)</code>. Values are for game version 0.429.1 and the current game master.</p>
+<h2>Where each formula applies</h2>
+<ul>
+<li><strong>PvP formula:</strong> Team Leader and NPC trainer battles, and Team GO Rocket battles. In these battles the game calculates damage on your device.</li>
+<li><strong>Online PvP</strong> (GO Battle League, friend battles): the server calculates damage and sends the results. The server probably uses the same formula, but this is not confirmed.</li>
+<li><strong>Raid and gym formula:</strong> raids and gym battles.</li>
+</ul>
+<h2>PvP formula</h2>
+<pre><code>Atk    = CPM × (base Attack + Attack IV) × AttackStage × 1.3
+Def    = CPM × (base Defense + Defense IV) × DefenseStage
+Charge = 1 for a fast move
+       = clamp(AttackerScore − DefenderScore, 0, 1) for a charged move
+Damage = floor(0.5 × Power × Atk / Def × Charge × Effectiveness × STAB × Shadow × Purified) + 1
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning</th>
+<th>Current value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CPM</td>
+<td>CP multiplier for the Pokémon's level</td>
+<td>Level 40 = 0.7903</td>
+</tr>
+<tr>
+<td>base Attack, base Defense</td>
+<td>species base stats</td>
+<td>per species</td>
+</tr>
+<tr>
+<td>IV</td>
+<td>individual values</td>
+<td>0–15</td>
+</tr>
+<tr>
+<td>AttackStage, DefenseStage</td>
+<td>stat stage multiplier (attacker's attack stage, defender's defense stage)</td>
+<td>see the table below</td>
+</tr>
+<tr>
+<td>1.3</td>
+<td>PvP attack bonus, for fast and charged moves</td>
+<td>1.3</td>
+</tr>
+<tr>
+<td>Power</td>
+<td>PvP move power (the PvP value, not the raid value)</td>
+<td>per move</td>
+</tr>
+<tr>
+<td>AttackerScore</td>
+<td>charged-move score</td>
+<td>0–1</td>
+</tr>
+<tr>
+<td>DefenderScore</td>
+<td>1 if the defender uses a shield, else 0</td>
+<td>0 or 1</td>
+</tr>
+<tr>
+<td>Effectiveness</td>
+<td>type effectiveness, multiplied for each defender type</td>
+<td>1.6, 1.0, 0.625 or 0.390625 per type</td>
+</tr>
+<tr>
+<td>STAB</td>
+<td>same-type attack bonus</td>
+<td>1.2</td>
+</tr>
+<tr>
+<td>Shadow</td>
+<td>1.2 for a shadow attacker; 1.2 more for a shadow defender (÷ 0.8333333)</td>
+<td>1.0–1.44</td>
+</tr>
+<tr>
+<td>Purified</td>
+<td>purified attacker against a shadow defender</td>
+<td>1.0 (no effect)</td>
+</tr>
+</tbody>
+</table>
+<p>Stat stages:</p>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>−4</th>
+<th>−3</th>
+<th>−2</th>
+<th>−1</th>
+<th>0</th>
+<th>+1</th>
+<th>+2</th>
+<th>+3</th>
+<th>+4</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Multiplier</td>
+<td>0.5</td>
+<td>0.5714286</td>
+<td>0.6666667</td>
+<td>0.8</td>
+<td>1.0</td>
+<td>1.25</td>
+<td>1.5</td>
+<td>1.75</td>
+<td>2.0</td>
+</tr>
+</tbody>
+</table>
+<p>Rules:</p>
+<ul>
+<li>All calculations use 32-bit floats. Atk and Def are not rounded.</li>
+<li>The game rounds down, then adds 1. So every hit does at least 1 damage.</li>
+<li>A shielded charged move does exactly 1 damage.</li>
+<li>A charged-move score of 0.5 gives half damage.</li>
+<li>PvP damage has no weather, friendship, Mega boost, random variation or critical hits.</li>
+<li>Stat stage changes from a move apply after that move's damage. They also apply when the defender uses a shield.</li>
+<li>Energy is limited to 0–100.</li>
+<li>Hidden Power's type depends on the Pokémon.</li>
+<li><strong>Aegislash Shield Forme as a defender:</strong> its final Def is replaced by 272. CPM, IVs, stat stages and bonuses have no effect on it.</li>
+<li><strong>Aegislash Shield Forme as an attacker:</strong> it gets 6 energy for each attack, not the move's normal energy.</li>
+</ul>
+<p>NPC opponents:</p>
+<table>
+<thead>
+<tr>
+<th>Difficulty</th>
+<th>Charged-move score</th>
+<th>Shield</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Easy</td>
+<td>0.5–0.75</td>
+<td>no effect</td>
+</tr>
+<tr>
+<td>Medium</td>
+<td>0.75–1.0</td>
+<td>no effect</td>
+</tr>
+<tr>
+<td>Hard</td>
+<td>1.0</td>
+<td>always shields</td>
+</tr>
+</tbody>
+</table>
+<h3>PvP examples</h3>
+<p>Machamp vs Tyranitar, both level 40 (CPM 0.7903), IVs 15/15/15.</p>
+<table>
+<thead>
+<tr>
+<th>Case</th>
+<th>Damage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Machamp Counter → Tyranitar</td>
+<td>18</td>
+</tr>
+<tr>
+<td>Machamp Cross Chop → Tyranitar, full charge, no shield</td>
+<td>124</td>
+</tr>
+<tr>
+<td>Same, charged-move score 0.5</td>
+<td>62</td>
+</tr>
+<tr>
+<td>Same, Tyranitar shields</td>
+<td>1</td>
+</tr>
+<tr>
+<td>Machamp at +2 Attack, Cross Chop → Tyranitar at −1 Defense</td>
+<td>231</td>
+</tr>
+<tr>
+<td>Shadow Machamp Counter → shadow Tyranitar</td>
+<td>26</td>
+</tr>
+<tr>
+<td>Tyranitar Smack Down → Machamp</td>
+<td>9</td>
+</tr>
+<tr>
+<td>Machamp Counter → Aegislash Shield Forme</td>
+<td>3</td>
+</tr>
+</tbody>
+</table>
+<p>Worked example, Counter → Tyranitar:</p>
+<pre><code>Atk    = 0.7903 × (234 + 15) × 1.3 = 255.82
+Def    = 0.7903 × (207 + 15)       = 175.447
+Damage = floor(0.5 × 8 × 255.82 / 175.447 × 2.56 × 1.2) + 1
+       = floor(17.917) + 1 = 18
+</code></pre>
+<h2>Raid and gym formula</h2>
+<pre><code>Atk    = CPM × (base Attack + Attack IV)
+Def    = CPM × (base Defense + Defense IV)
+Damage = floor(0.5 × Power × Atk / Def × Effectiveness × Friendship × STAB × Weather × Shadow × Purified × Mega × Party × Remote + 1)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning</th>
+<th>Current value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CPM</td>
+<td>CP multiplier, including a Mega's CP multiplier while it is Mega Evolved</td>
+<td>per Pokémon</td>
+</tr>
+<tr>
+<td>Power</td>
+<td>raid move power (not the PvP value)</td>
+<td>per move</td>
+</tr>
+<tr>
+<td>Effectiveness</td>
+<td>type effectiveness</td>
+<td>1.6, 1.0, 0.625 or 0.390625 per type</td>
+</tr>
+<tr>
+<td>Friendship</td>
+<td>friendship bonus</td>
+<td>1.03 / 1.05 / 1.07 / 1.10 / 1.12 (none = 1.0)</td>
+</tr>
+<tr>
+<td>STAB</td>
+<td>same-type attack bonus</td>
+<td>1.2</td>
+</tr>
+<tr>
+<td>Weather</td>
+<td>weather boost for the move's type</td>
+<td>1.2</td>
+</tr>
+<tr>
+<td>Shadow</td>
+<td>1.2 for a shadow attacker; 1.2 more for a shadow defender</td>
+<td>1.0–1.44</td>
+</tr>
+<tr>
+<td>Purified</td>
+<td>purified attacker against a shadow defender</td>
+<td>1.0 (no effect)</td>
+</tr>
+<tr>
+<td>Mega</td>
+<td>Mega boost, player attacks only</td>
+<td>1.3 same type, 1.1 other type</td>
+</tr>
+<tr>
+<td>Party</td>
+<td>party damage bonus, charged moves only</td>
+<td>1.0 with no bonus</td>
+</tr>
+<tr>
+<td>Remote</td>
+<td>remote raid multiplier</td>
+<td>1.0 (no effect)</td>
+</tr>
+</tbody>
+</table>
+<p>Rules:</p>
+<ul>
+<li>All calculations use 32-bit floats.</li>
+<li>The game adds 1, then rounds down. For normal values this gives the same result as the PvP rounding.</li>
+<li>A dodged attack does 25% damage, minimum 1.</li>
+<li>The defender gets energy equal to half the damage, rounded up.</li>
+<li>Raid damage has no 1.3 bonus, no stat stages and no critical hits.</li>
+</ul>
+<h3>Raid example</h3>
+<p>Machamp (level 40, 15/15/15) Counter (raid power 13) → Tyranitar (level 40, 15/15/15). Effectiveness 2.56, STAB 1.2.</p>
+<table>
+<thead>
+<tr>
+<th>Case</th>
+<th>Damage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>No weather, no friendship</td>
+<td>23</td>
+</tr>
+<tr>
+<td>Cloudy (Fighting boosted)</td>
+<td>27</td>
+</tr>
+<tr>
+<td>Shadow Machamp, no weather</td>
+<td>27</td>
+</tr>
+<tr>
+<td>Dynamic Punch (power 85), cloudy, Best Friends</td>
+<td>194</td>
+</tr>
+</tbody>
+</table>
+<h2>PvP and raids compared</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>PvP</th>
+<th>Raid / gym</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Rounding</td>
+<td>round down, then +1</td>
+<td>+1, then round down</td>
+</tr>
+<tr>
+<td>Attack bonus</td>
+<td>1.3</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Stat stages</td>
+<td>yes</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Charged-move score / shield</td>
+<td>yes</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Dodge</td>
+<td>none</td>
+<td>25% damage, minimum 1</td>
+</tr>
+<tr>
+<td>Weather</td>
+<td>none</td>
+<td>1.2</td>
+</tr>
+<tr>
+<td>Friendship</td>
+<td>none</td>
+<td>1.03–1.12</td>
+</tr>
+<tr>
+<td>Mega boost</td>
+<td>none</td>
+<td>1.3 / 1.1</td>
+</tr>
+<tr>
+<td>Party bonus</td>
+<td>none</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>Move power</td>
+<td>PvP values (Counter 8)</td>
+<td>raid values (Counter 13)</td>
+</tr>
+<tr>
+<td>Aegislash Shield Forme Def 272</td>
+<td>yes</td>
+<td>no</td>
+</tr>
+</tbody>
+</table>
+<h2>Not confirmed</h2>
+<ol>
+<li>The online PvP server uses the same formula.</li>
+<li>How the charged-move tap meter turns into the 0–1 score. The game master lists 0.25 / 0.5 / 0.75 / 1.0, but this is not confirmed.</li>
+<li>Whether a Mega Evolved Pokémon uses Mega base stats in raids.</li>
+<li>Whether Aegislash's 6 energy also applies to charged moves.</li>
+<li>Whether the server later corrects the health values that the device shows in raids.</li>
+</ol>
+</main></body></html>
