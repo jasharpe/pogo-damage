@@ -281,10 +281,10 @@ float remote        = ...;                          // 1.0f
 float x = atk * power;                              // power is a float
 x = x / def;
 x = x * effectiveness;
-x = x * friendship;                                 // the order of these six lines
-x = x * stab;                                       // (effectiveness to purified) is not fully
-x = x * weather;                                    // confirmed; it can change only the last
-x = x * shadow;                                     // bit of the float
+x = x * friendship;
+x = x * stab;
+x = x * weather;
+x = x * shadow;
 x = x * purified;
 x = x * mega;
 x = x * party;
@@ -480,7 +480,7 @@ int defenderEnergy = (int)MathF.Ceiling(0.5f * damage);           // round up to
 <li>Whether the server later corrects the health values that the device shows in raids.</li>
 </ol>
 <h2 id="reference-code">Reference code</h2>
-<p>The game's own damage code from version 0.429.1, written out as C#. Some names are short codes (for example <code>bnai</code>, <code>bvwf</code>) because the app hides its private names. <code>f32(x)</code> marks a rounding of <code>x</code> to a 32-bit float; every <code>float</code> operation rounds to 32-bit float.</p>
+<p><code>f32(x)</code> marks a rounding of <code>x</code> to a 32-bit float; every <code>float</code> operation rounds to 32-bit float.</p>
 <h3 id="pvp-entry-points">PvP: entry points</h3>
 <pre><code class="language-csharp">int GetFastAttackDamage(CombatPokemonProto attacker, CombatPokemonProto defender)
     =&gt; GetAttackDamage(attacker, defender, attacker.Move1,
@@ -494,7 +494,7 @@ int GetSpecialAttackDamage(attacker, defender, int moveId, float attackerScore, 
                        minigameVar: Settings?.MinigameBonusVariableMultiplier ?? 1f);
 </code></pre>
 <p><code>Settings</code> is the <code>COMBAT_SETTINGS</code> game master entry.</p>
-<h3 id="pvp-damage-bnai">PvP: damage (<code>bnai</code>)</h3>
+<h3 id="pvp-damage-getattackdamage">PvP: damage (<code>GetAttackDamage</code>)</h3>
 <pre><code class="language-csharp">int GetAttackDamage(CombatPokemonProto A, CombatPokemonProto D, int moveId,
                     float atkMult, float atkScore = 0, float defScore = 0, float g = 0)
 {
@@ -607,9 +607,9 @@ float GetPurifiedDamageModifier(A, D, S) {
 
     HoloPokemonType t = move.Type;
     float eff     = gm.Get_TypeEffectiveness(t, dS);
-    float stab    = bvwf(t, aS);
-    float weather = bvwh(t, cond.Weather);
-    float friend  = bvwi(cond.HighestFriendshipLevelMilestone);
+    float stab    = GetSameTypeAttackMultiplier(t, aS);
+    float weather = GetWeatherMultiplier(t, cond.Weather);
+    float friend  = GetFriendshipMultiplier(cond.HighestFriendshipLevelMilestone);
     var   gbs     = gm.MaybeGet&lt;GymBattleSettingsProto&gt;();
     float shadow  = shadowHelper.GetShadowDamageModifier (attacker.PokemonDisplay, target.PokemonDisplay, gbs);
     float purif   = shadowHelper.GetPurifiedDamageModifier(attacker.PokemonDisplay, target.PokemonDisplay, gbs);
@@ -619,8 +619,8 @@ float GetPurifiedDamageModifier(A, D, S) {
         remote = gm.MaybeGet&lt;RaidClientSettingsProto&gt;().RemoteDamageModifier;
     float mega = 1f, pct = 1f;
     if (!attackerIsBattleEnemy) {
-        if (cond.CurrentBattleFrame != null) mega = bvvy(attacker, move, cond.CurrentBattleFrame);
-        if (cond.CurrentBattleFrame != null) pct  = bvvz(move, cond.CurrentBattleFrame);
+        if (cond.CurrentBattleFrame != null) mega = GetMegaBoostMultiplier(attacker, move, cond.CurrentBattleFrame);
+        if (cond.CurrentBattleFrame != null) pct  = GetPartyDamageMultiplier(move, cond.CurrentBattleFrame);
     }
 
     float A = cpmA * (float)(ivAtk + baseAtk);      // float32
@@ -636,22 +636,22 @@ float GetPurifiedDamageModifier(A, D, S) {
 }
 </code></pre>
 <h3 id="raid-gym-helpers">Raid / gym: helpers</h3>
-<pre><code class="language-csharp">float bvwf(HoloPokemonType t, IPokemonSettings aS)          // STAB
+<pre><code class="language-csharp">float GetSameTypeAttackMultiplier(HoloPokemonType t, IPokemonSettings aS)   // STAB
     =&gt; (t == aS.Type1 || t == aS.Type2) ? gm.MaybeGet&lt;GymBattleSettingsProto&gt;().SameTypeAttackBonusMultiplier : 1f;
 
-float bvwh(HoloPokemonType t, Weather weather)                // weather boost
+float GetWeatherMultiplier(HoloPokemonType t, Weather weather)        // weather boost
     =&gt; gm.IsPokemonMoveWeatherBoosted(weather, t) ? (float)gm.MaybeGet&lt;WeatherBonusProto&gt;().AttackBonusMultiplier : 1f;
 
-float bvwi(int level)                                         // friendship
+float GetFriendshipMultiplier(int level)                              // friendship
     =&gt; level != 0 ? GetFriendshipLevelMilestoneSettings(gm, level).AttackBonusPercentage : 1f;   // key &quot;FRIENDSHIP_LEVEL_{n}&quot;
 
-float bvvy(attacker, move, frame)                             // Mega boost
+float GetMegaBoostMultiplier(attacker, move, frame)                   // Mega boost
     =&gt; frame.GetMegaBoostType(attacker, move) switch {
            2 =&gt; MegaEvoSettings.AttackBoostFromMegaSameType,
            1 =&gt; MegaEvoSettings.AttackBoostFromMegaDifferentType,
            _ =&gt; 1f };
 
-float bvvz(move, frame)                                       // party damage bonus, charged moves only
+float GetPartyDamageMultiplier(move, frame)                           // party damage bonus, charged moves only
     =&gt; move.EnergyDelta &lt; 0 ? Math.Max(0f, (float)frame.LocalPlayer.DamageDealtPercentageModifier / 100f + 1f) : 1f;
 
 float CombatCpMultiplier                                      // PokemonProto
