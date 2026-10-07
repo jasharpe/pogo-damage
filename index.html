@@ -13,17 +13,7 @@ pre{background:var(--code);border-radius:6px;overflow-x:auto;padding:12px 14px;l
 table{border-collapse:collapse;display:block;overflow-x:auto;margin:12px 0} th,td{border:1px solid var(--line);padding:5px 10px;vertical-align:top} th{background:var(--code);text-align:left}
 </style></head><body><main>
 <h1 id="pokemon-go-damage-formulas-pvp-and-raidsgyms">Pokémon GO damage formulas: PvP and raids/gyms</h1>
-<p>PvP damage is <code>floor(0.5 × Power × Atk / Def × Charge × Effectiveness × STAB × Shadow × Purified) + 1</code>. Atk includes a 1.3 bonus and the attack stat stage. Def includes the defense stat stage. Raid and gym damage is <code>floor(0.5 × Power × Atk / Def × Effectiveness × Friendship × STAB × Weather × Shadow × Purified × Mega × Party × Remote + 1)</code>. Values are for game version 0.429.1 and the current game master.</p>
-<p><strong>Number types and order of operations:</strong></p>
-<ul>
-<li>Every intermediate value is a 32-bit float (<code>float</code>), not a double. Each multiplication or division rounds to 32-bit float before the next step.</li>
-<li>Atk and Def stay floats. They are never rounded to whole numbers. Only <code>base + IV</code> is an integer sum, which is then converted to a float.</li>
-<li>The final damage is an integer (<code>int</code>). It is not stored as a float.</li>
-<li>PvP: <code>Atk = ((CPM × (base + IV)) × stage) × 1.3</code> and <code>Def = (CPM × (base + IV)) × stage × 1.0</code>. Then <code>((((((Atk × Power) × Charge) × Effectiveness) × STAB) × Shadow) × Purified) / Def × 0.5</code>, in exactly that order. The result is rounded down to an integer, and then the integer 1 is added.</li>
-<li>Raid/gym: <code>((Atk × Power) / Def) × Effectiveness × Friendship × STAB × Weather × Shadow × Purified × Mega × Party × Remote × 0.5</code>, left to right. Then the float 1.0 is added, and the result is rounded down to an integer. The order of the six terms from Effectiveness to Purified is not fully confirmed; it can change only the last bit of the float.</li>
-<li>Because the steps round to 32-bit float in this order, a calculation in a different order or in double precision can give a different result when the value is very near a whole number.</li>
-<li>The full calculation is in <a href="#reference-code">Reference code</a> at the end.</li>
-</ul>
+<p>Damage formulas for Pokémon GO version 0.429.1 with the current game master. The code blocks below give each calculation step by step, with the number type of every value.</p>
 <h2 id="where-each-formula-applies">Where each formula applies</h2>
 <ul>
 <li><strong>PvP formula:</strong> Team Leader and NPC trainer battles, and Team GO Rocket battles. In these battles the game calculates damage on your device.</li>
@@ -31,11 +21,47 @@ table{border-collapse:collapse;display:block;overflow-x:auto;margin:12px 0} th,t
 <li><strong>Raid and gym formula:</strong> raids and gym battles.</li>
 </ul>
 <h2 id="pvp-formula">PvP formula</h2>
-<pre><code>Atk    = CPM × (base Attack + Attack IV) × AttackStage × 1.3
-Def    = CPM × (base Defense + Defense IV) × DefenseStage
-Charge = 1 for a fast move
-       = clamp(AttackerScore − DefenderScore, 0, 1) for a charged move
-Damage = floor(0.5 × Power × Atk / Def × Charge × Effectiveness × STAB × Shadow × Purified) + 1
+<pre><code class="language-csharp">// Number types: int = 32-bit integer, float = 32-bit float.
+// The PvP calculation uses no double. Every float operation rounds its
+// result to float before the next line. The lines run in this order.
+
+// Step 1: attacker's Attack
+int   attackSum = baseAttack + attackIV;            // integer add (species base + IV 0-15)
+float atk       = attackerCpm * (float)attackSum;   // int -&gt; float, then float multiply
+atk             = atk * attackStageMultiplier;      // float; 1.0 at stage 0 (table below)
+
+// Step 2: defender's Defense
+int   defenseSum = baseDefense + defenseIV;         // integer add
+float def        = defenderCpm * (float)defenseSum; // int -&gt; float, then float multiply
+def              = def * defenseStageMultiplier;    // float; 1.0 at stage 0
+
+// Step 3: PvP bonuses (Atk and Def are never rounded to whole numbers)
+atk = atk * 1.3f;                                   // attack bonus, fast and charged moves
+def = def * 1.0f;                                   // defense bonus
+if (defenderIsAegislashShieldForme) def = 272f;     // replaces the final Def
+
+// Step 4: charged-move multiplier
+float charge = 1.0f;                                // fast move
+if (chargedMove) {
+    float score = attackerScore - 1.0f * defenderScore;   // defenderScore: 1.0 with a shield, else 0
+    if (score &lt; 0f) score = 0f;
+    if (score &gt; 1f) score = 1f;
+    charge = (1.0f - 1.0f) + score * 1.0f;          // = score
+}
+
+// Step 5: damage, in exactly this order
+float x = atk * power;                              // power is a float
+x = x * charge;
+x = x * effectiveness;                              // float, product over the defender's types
+x = x * stab;                                       // 1.2f or 1.0f
+x = x * shadow;                                     // float: (1.2f or 1.0f) / (0.8333333f or 1.0f)
+x = x * purified;                                   // 1.0f
+x = x / def;
+x = x * 0.5f;
+
+// Step 6: result
+int damage = (int)MathF.Floor(x) + 1;                // round down to int, then integer +1
+                                                    // damage is an int; it is never stored as a float
 </code></pre>
 <table>
 <thead>
@@ -230,9 +256,51 @@ Damage = floor(0.5 × 8 × 255.82 / 175.447 × 2.56 × 1.2) + 1
        = floor(17.917) + 1 = 18
 </code></pre>
 <h2 id="raid-and-gym-formula">Raid and gym formula</h2>
-<pre><code>Atk    = CPM × (base Attack + Attack IV)
-Def    = CPM × (base Defense + Defense IV)
-Damage = floor(0.5 × Power × Atk / Def × Effectiveness × Friendship × STAB × Weather × Shadow × Purified × Mega × Party × Remote + 1)
+<pre><code class="language-csharp">// Number types: int = 32-bit integer, long = 64-bit integer, float = 32-bit float,
+// double = 64-bit float. Every float operation rounds its result to float before
+// the next line. The lines run in this order.
+
+// Step 1: Attack and Defense (no bonus, no stat stages; never rounded to whole numbers)
+int   attackSum  = attackIV + baseAttack;           // integer add
+float atk        = attackerCpm * (float)attackSum;  // int -&gt; float, then float multiply
+int   defenseSum = defenseIV + baseDefense;         // integer add
+float def        = defenderCpm * (float)defenseSum; // int -&gt; float, then float multiply
+
+// Step 2: multipliers (all float)
+float effectiveness = ...;                          // product over the defender's types
+float friendship    = ...;                          // 1.0f, or 1.03f to 1.12f
+float stab          = ...;                          // 1.2f or 1.0f
+float weather       = boosted ? (float)weatherBonus : 1.0f;   // the setting is a double (1.2), converted to float
+float shadow        = ...;                          // (1.2f or 1.0f) / (0.8333333f or 1.0f)
+float purified      = ...;                          // 1.0f
+float mega          = ...;                          // 1.3f, 1.1f or 1.0f (player attacks only)
+float party         = ...;                          // Max(0f, (float)partyPercent / 100f + 1f), charged moves only; partyPercent is a long
+float remote        = ...;                          // 1.0f
+
+// Step 3: damage, in exactly this order
+float x = atk * power;                              // power is a float
+x = x / def;
+x = x * effectiveness;
+x = x * friendship;                                 // the order of these six lines
+x = x * stab;                                       // (effectiveness to purified) is not fully
+x = x * weather;                                    // confirmed; it can change only the last
+x = x * shadow;                                     // bit of the float
+x = x * purified;
+x = x * mega;
+x = x * party;
+x = x * remote;
+x = x * 0.5f;
+x = x + 1.0f;                                       // float add, before rounding
+
+// Step 4: result
+int damage = (int)MathF.Floor(x);                    // round down to int; damage is an int
+
+// Step 5: after the formula (raids and gyms)
+float pct  = Math.Max(0f, (float)(defenderPct + attackerPct) / 100f + 1f);   // the two percentages are longs
+long  flat = Math.Max(0L, attackerFlat + defenderFlat + damage);             // long add
+damage     = (int)(pct * (float)flat);              // long -&gt; float, float multiply, then truncate to int
+if (dodged) damage = (int)Math.Max(1f, (1f - 0.75f) * damage);   // int -&gt; float, then truncate; minimum 1
+int defenderEnergy = (int)MathF.Ceiling(0.5f * damage);           // round up to int
 </code></pre>
 <table>
 <thead>
@@ -412,81 +480,188 @@ Damage = floor(0.5 × Power × Atk / Def × Effectiveness × Friendship × STAB 
 <li>Whether the server later corrects the health values that the device shows in raids.</li>
 </ol>
 <h2 id="reference-code">Reference code</h2>
-<p>C#-style code with the same operations, in the same order, with the same number types. <code>float</code> is a 32-bit float; every <code>float</code> operation rounds to 32-bit float. <code>Floor</code> rounds toward minus infinity.</p>
-<h3 id="pvp">PvP</h3>
-<pre><code class="language-csharp">int PvpDamage(Pokemon attacker, Pokemon defender, Move move,
-              float attackerScore, float defenderScore, bool chargedMove)
+<p>The game's own damage code from version 0.429.1, written out as C#. Some names are short codes (for example <code>bnai</code>, <code>bvwf</code>) because the app hides its private names. <code>f32(x)</code> marks a rounding of <code>x</code> to a 32-bit float; every <code>float</code> operation rounds to 32-bit float.</p>
+<h3 id="pvp-entry-points">PvP: entry points</h3>
+<pre><code class="language-csharp">int GetFastAttackDamage(CombatPokemonProto attacker, CombatPokemonProto defender)
+    =&gt; GetAttackDamage(attacker, defender, attacker.Move1,
+                       attackMultiplier: Settings?.FastAttackBonusMultiplier ?? 1f,
+                       attackerScore: 0, defenderScore: 0, minigameVar: 0);
+
+int GetSpecialAttackDamage(attacker, defender, int moveId, float attackerScore, float defenderScore)
+    =&gt; GetAttackDamage(attacker, defender, moveId,
+                       attackMultiplier: Settings?.ChargeAttackBonusMultiplier ?? 1f,
+                       attackerScore, defenderScore,
+                       minigameVar: Settings?.MinigameBonusVariableMultiplier ?? 1f);
+</code></pre>
+<p><code>Settings</code> is the <code>COMBAT_SETTINGS</code> game master entry.</p>
+<h3 id="pvp-damage-bnai">PvP: damage (<code>bnai</code>)</h3>
+<pre><code class="language-csharp">int GetAttackDamage(CombatPokemonProto A, CombatPokemonProto D, int moveId,
+                    float atkMult, float atkScore = 0, float defScore = 0, float g = 0)
 {
-    float bonus = chargedMove ? ChargeAttackBonus      // 1.3
-                              : FastAttackBonus;       // 1.3
-    float g     = chargedMove ? MinigameVariable       // 1.0
-                              : 0f;
+    IPokemonSettings aS = gm.Get_PokemonSettingsWithOverrides(A);
+    IPokemonSettings dS = gm.Get_PokemonSettingsWithOverrides(D);
+    var move = gm.MaybeGetByKey&lt;CombatMoveSettingsProto&gt;((HoloPokemonMove)moveId);
+    if (move == null) return 0;
+    var stageCfg = gm.MaybeGet&lt;CombatStatStageSettingsProto&gt;();
 
-    float atk = attacker.Cpm * (float)(attacker.BaseAttack + attacker.IvAttack);    // integer sum, then float
-    atk = atk * AttackStageMultiplier(attacker.AttackStage);                         // 1.0 at stage 0
-    float def = defender.Cpm * (float)(defender.BaseDefense + defender.IvDefense);
-    def = def * DefenseStageMultiplier(defender.DefenseStage);
-    atk = atk * bonus;
-    def = def * DefenseBonus;                                                        // 1.0
+    float atk = f32(f32(A.CpMultiplier * (float)(A.IndividualAttack + aS.Stats.BaseAttack))
+                    * A.AttackBuffMultiplier(stageCfg));
+    float def = f32(f32(D.CpMultiplier * (float)(D.IndividualDefense + dS.Stats.BaseDefense))
+                    * D.DefenseBuffMultiplier(stageCfg));
+    float defBonus = Settings?.DefenseBonusMultiplier ?? 1f;
+    atk = f32(atk * atkMult);                                           // 1.3 fast / 1.3 charged
+    def = f32(def * defBonus);                                          // 1.0
 
-    if (defender.IsAegislashShieldForme) def = 272f;                                 // replaces the final Def
-
-    float mg = 1f - g;
-    if (g != 0f) {
-        float s = attackerScore - DefenderMinigameMultiplier * defenderScore;         // DMM = 1.0
-        s = Clamp(s, 0f, 1f);
-        mg = mg + s * g;
+    var ibfc = gm.GetIBFCOverrides();                                   // IBFC_LIGHTWEIGHT_SETTINGS
+    if (ibfc != null) {
+        if (A.PokedexId == 681 /*AEGISLASH*/ &amp;&amp; A.PokemonDisplay.Form == 2639 /*AEGISLASH_SHIELD*/
+            &amp;&amp; A.Move1 == moveId) {                                     // fast move only
+            float o = ibfc.DefaultAttackOverride;
+            if (o &lt; 0)        atk = 0f;
+            else if (o != 0)  atk = (float)(int)o;                      // replaces the full effective attack
+            else if (ibfc.DefaultAttackMultiplier != 0)
+                              atk = f32(atk * (float)(int)ibfc.DefaultAttackMultiplier);   // multiplier truncated to int
+        }
+        if (D.PokedexId == 681 &amp;&amp; D.PokemonDisplay.Form == 2639) {
+            float o = ibfc.DefaultDefenseOverride;
+            if (o != 0)       def = (float)(int)o;                      // replaces the full effective defense
+            else if (ibfc.DefaultDefenseMultiplier != 0)
+                              def = f32(def * (float)(int)ibfc.DefaultDefenseMultiplier);
+        }
     }
 
-    float eff      = TypeEffectiveness(move.Type, defender.Type1, defender.Type2);   // per type, multiplied
-    float stab     = (move.Type == attacker.Type1 || move.Type == attacker.Type2) ? 1.2f : 1f;
-    float shadow   = (attacker.IsShadow ? 1.2f : 1f) / (defender.IsShadow ? 0.8333333f : 1f);
-    float purified = (attacker.IsPurified &amp;&amp; defender.IsShadow) ? 1.0f : 1f;
+    HoloPokemonType t = (move.UniqueId == 281 /*HIDDEN_POWER_FAST*/)
+        ? (int)(Mathf.Abs((float)((long)A.PokemonId % 16)) + 2f)        // 2..17 = FIGHTING..DARK
+        : move.Type;
 
-    float x = atk * move.Power;
-    x = mg       * x;
-    x = eff      * x;
-    x = stab     * x;
-    x = shadow   * x;
-    x = purified * x;
-    x = x / def;
-    x = x * 0.5f;
-    return (int)Floor(x) + 1;                                                        // integer result
+    float mg = f32(1f - g);
+    if (!Mathf.Approximately(g, 0f)) {
+        float s = f32(atkScore - f32((Settings?.DefenderMinigameMultiplier ?? 1f) * defScore));
+        s = (s &lt; 0) ? 0f : (s &gt; 1f ? 1f : s);                           // Clamp01
+        mg = f32(mg + f32(s * g));
+    }
+
+    float eff  = gm.Get_TypeEffectiveness(t, dS.Type1, dS.Type2);
+    float stab = GetSameTypeAttackMultiplier(aS, move, A);              // see GetSameTypeAttackMultiplier below
+    float shad = shadowHelper.GetShadowDamageModifier(A, D, Settings);
+    float pur  = shadowHelper.GetPurifiedDamageModifier(A, D, Settings);
+
+    float x = f32(atk * move.Power);
+    x = f32(mg   * x);
+    x = f32(eff  * x);
+    x = f32(stab * x);
+    x = f32(shad * x);
+    x = f32(pur  * x);
+    x = f32(x / def);
+    x = f32(x * 0.5f);
+    return (floor(x) == +inf) ? int.MinValue + 1 : (int)floor(x) + 1;
 }
 </code></pre>
-<p>Hidden Power: its type is <code>(int)(Abs((float)((long)pokemonId % 16)) + 2f)</code>, where <code>pokemonId</code> is the Pokémon's unique 64-bit ID and <code>%</code> is a signed remainder. This gives 2–17 (Fighting to Dark). The same type is used for STAB.</p>
-<h3 id="raid-gym">Raid / gym</h3>
-<pre><code class="language-csharp">int RaidDamage(Pokemon attacker, Pokemon defender, Move move, Conditions cond, bool attackerIsBoss)
-{
-    float atk = attacker.Cpm * (float)(attacker.IvAttack + attacker.BaseAttack);    // integer sum, then float
-    float def = defender.Cpm * (float)(defender.IvDefense + defender.BaseDefense);
-
-    float eff      = TypeEffectiveness(move.Type, defender.Type1, defender.Type2);
-    float friend   = FriendshipBonus(cond.FriendshipLevel);                          // 1.0 at level 0
-    float stab     = (move.Type == attacker.Type1 || move.Type == attacker.Type2) ? 1.2f : 1f;
-    float weather  = IsBoosted(cond.Weather, move.Type) ? 1.2f : 1f;
-    float shadow   = (attacker.IsShadow ? 1.2f : 1f) / (defender.IsShadow ? 0.8333333f : 1f);
-    float purified = (attacker.IsPurified &amp;&amp; defender.IsShadow) ? 1.0f : 1f;
-    float mega     = attackerIsBoss ? 1f : MegaBoost(attacker, move);                // 1.3 / 1.1 / 1.0
-    float party    = attackerIsBoss ? 1f : PartyBonus(move);                         // charged moves only
-    float remote   = cond.IsRemote ? RemoteDamageModifier : 1f;                      // 1.0
-
-    float x = atk * move.Power;
-    x = x / def;
-    x = x * eff * friend * stab * weather * shadow * purified * mega * party * remote;   // left to right
-    x = x * 0.5f;
-    x = x + 1f;                                                                       // float add
-    return (int)Floor(x);                                                             // integer result
+<h3 id="pvp-stat-stage-multiplier">PvP: stat stage multiplier</h3>
+<pre><code class="language-csharp">float AttackBuffMultiplier(CombatPokemonProto p, CombatStatStageSettingsProto s) {
+    if (p.AttackStatStage == 0) return 1f;                  // the table is not read
+    int i = p.AttackStatStage - s.MinimumStatStage;         // stage + 4
+    return s.AttackBuffMultiplier[i];
 }
-
-// Applied after RaidDamage:
-int ApplyModifiers(int dmg, long attackerFlat, long attackerPct, long defenderFlat, long defenderPct)
-{
-    float p = Max(0f, (float)(defenderPct + attackerPct) / 100f + 1f);
-    long  f = Max(0L, attackerFlat + defenderFlat + dmg);
-    return (int)(p * (float)f);                                                       // truncated toward zero
-}
-int Dodged(int dmg) =&gt; (int)Max(1f, (1f - 0.75f) * dmg);                             // 25 %, minimum 1
-int DefenderEnergyGain(int dmg) =&gt; CeilToInt(0.5f * dmg);
+// DefenseBuffMultiplier: the same, with DefenseStatStage and DefenseBuffMultiplier
 </code></pre>
+<h3 id="pvp-and-raid-type-effectiveness">PvP and raid: type effectiveness</h3>
+<pre><code class="language-csharp">var te = GetByKey&lt;TypeEffectiveSettingsProto&gt;(attackType);
+float m = 1f;
+if (d1-1 &gt;= 0 &amp;&amp; d1-1 &lt; te.AttackScalar.Count) m = te.AttackScalar[d1-1];
+if (d2-1 &gt;= 0 &amp;&amp; d2-1 &lt; te.AttackScalar.Count) m = f32(m * te.AttackScalar[d2-1]);   // type2 = 0 (none) is skipped
+return m;
+</code></pre>
+<h3 id="pvp-stab-getsametypeattackmultiplier">PvP: STAB (<code>GetSameTypeAttackMultiplier</code>)</h3>
+<pre><code class="language-csharp">t = (move.UniqueId == 281) ? HiddenPowerType(A.PokemonId) : move.Type;
+return (t == aS.Type1 || t == aS.Type2) ? (Settings?.SameTypeAttackBonusMultiplier ?? 1f) : 1f;   // GM 1.2
+</code></pre>
+<h3 id="pvp-shadow-and-purified">PvP: shadow and purified</h3>
+<pre><code class="language-csharp">float GetShadowDamageModifier(A, D, S) {
+    float a = (A.Display.Alignment == SHADOW &amp;&amp; S.ShadowPokemonAttackBonusMultiplier  &gt; 0) ? S.ShadowPokemonAttackBonusMultiplier  : 1f;
+    float d = (D.Display.Alignment == SHADOW &amp;&amp; S.ShadowPokemonDefenseBonusMultiplier &gt; 0) ? S.ShadowPokemonDefenseBonusMultiplier : 1f;
+    return f32(a / d);                       // a shadow defender gets 1/0.8333333 = 1.2000000x damage
+}
+float GetPurifiedDamageModifier(A, D, S) {
+    return (A.Display.Alignment == PURIFIED &amp;&amp; D.Display.Alignment == SHADOW
+            &amp;&amp; S.PurifiedPokemonAttackMultiplierVsShadow &gt; 0) ? S.PurifiedPokemonAttackMultiplierVsShadow : 1f;
+}
+</code></pre>
+<p>The raid versions read the same fields from <code>BATTLE_SETTINGS</code>.</p>
+<h3 id="raid-gym-damage-calculatedamage">Raid / gym: damage (<code>CalculateDamage</code>)</h3>
+<pre><code class="language-csharp">int CalculateDamage(IPokemonBattleData attacker, IPokemonBattleData target,
+                    MoveSettingsProto move, IBattleConditions cond,
+                    out AttackOutcome outcome, bool attackerIsBattleEnemy)
+{
+    if (attacker == null || target == null || move == null) { outcome = Missed(4); return 0; }
+    var aS = attacker.GetPokemonSettings(gm, useDisplay:true);
+    var dS = target  .GetPokemonSettings(gm, true);
+    if (aS == null || dS == null) { outcome = 4; return 0; }
+
+    int   baseAtk = aS.Stats.BaseAttack;
+    int   ivAtk   = attacker.IndividualAttack;
+    float cpmA    = attacker.CombatCpMultiplier;
+    int   baseDef = dS.Stats.BaseDefense;
+    int   ivDef   = target.IndividualDefense;
+    float cpmD    = target.CombatCpMultiplier;
+
+    HoloPokemonType t = move.Type;
+    float eff     = gm.Get_TypeEffectiveness(t, dS);
+    float stab    = bvwf(t, aS);
+    float weather = bvwh(t, cond.Weather);
+    float friend  = bvwi(cond.HighestFriendshipLevelMilestone);
+    var   gbs     = gm.MaybeGet&lt;GymBattleSettingsProto&gt;();
+    float shadow  = shadowHelper.GetShadowDamageModifier (attacker.PokemonDisplay, target.PokemonDisplay, gbs);
+    float purif   = shadowHelper.GetPurifiedDamageModifier(attacker.PokemonDisplay, target.PokemonDisplay, gbs);
+
+    float remote = 1f;
+    if (cond.IsRemote)
+        remote = gm.MaybeGet&lt;RaidClientSettingsProto&gt;().RemoteDamageModifier;
+    float mega = 1f, pct = 1f;
+    if (!attackerIsBattleEnemy) {
+        if (cond.CurrentBattleFrame != null) mega = bvvy(attacker, move, cond.CurrentBattleFrame);
+        if (cond.CurrentBattleFrame != null) pct  = bvvz(move, cond.CurrentBattleFrame);
+    }
+
+    float A = cpmA * (float)(ivAtk + baseAtk);      // float32
+    float D = cpmD * (float)(ivDef + baseDef);
+    float x = A * move.Power;
+    x = x / D;
+    x = x * eff * friend * stab * weather * shadow * purif * mega * pct * remote;   // left to right, float32
+    x = x * 0.5f;
+    x = x + 1f;
+    int dmg = (int)floorf(x);
+    outcome = eff &gt; 1 ? SuperEffective(3) : eff &lt; 1 ? NotVeryEffective(1) : Normal(2);
+    return dmg;
+}
+</code></pre>
+<h3 id="raid-gym-helpers">Raid / gym: helpers</h3>
+<pre><code class="language-csharp">float bvwf(HoloPokemonType t, IPokemonSettings aS)          // STAB
+    =&gt; (t == aS.Type1 || t == aS.Type2) ? gm.MaybeGet&lt;GymBattleSettingsProto&gt;().SameTypeAttackBonusMultiplier : 1f;
+
+float bvwh(HoloPokemonType t, Weather weather)                // weather boost
+    =&gt; gm.IsPokemonMoveWeatherBoosted(weather, t) ? (float)gm.MaybeGet&lt;WeatherBonusProto&gt;().AttackBonusMultiplier : 1f;
+
+float bvwi(int level)                                         // friendship
+    =&gt; level != 0 ? GetFriendshipLevelMilestoneSettings(gm, level).AttackBonusPercentage : 1f;   // key &quot;FRIENDSHIP_LEVEL_{n}&quot;
+
+float bvvy(attacker, move, frame)                             // Mega boost
+    =&gt; frame.GetMegaBoostType(attacker, move) switch {
+           2 =&gt; MegaEvoSettings.AttackBoostFromMegaSameType,
+           1 =&gt; MegaEvoSettings.AttackBoostFromMegaDifferentType,
+           _ =&gt; 1f };
+
+float bvvz(move, frame)                                       // party damage bonus, charged moves only
+    =&gt; move.EnergyDelta &lt; 0 ? Math.Max(0f, (float)frame.LocalPlayer.DamageDealtPercentageModifier / 100f + 1f) : 1f;
+
+float CombatCpMultiplier                                      // PokemonProto
+    =&gt; (display.IsMegaEvolved &amp;&amp; tempEvoCpMultiplier != 0) ? tempEvoCpMultiplier : cpMultiplier + additionalCpMultiplier;
+</code></pre>
+<h3 id="raid-gym-party-and-flat-modifiers-applied-after-calculatedamage">Raid / gym: party and flat modifiers (applied after <code>CalculateDamage</code>)</h3>
+<pre><code class="language-csharp">int d   = this.CalculateDamage(attacker, target, move, cond, out outcome, attackerIsBattleEnemy);
+float p = Math.Max(0f, (float)(targetDamageTakenPct + attackerDamageDealtPct) / 100f + 1f);     // long sum -&gt; float
+long  f = Math.Max(0L, attackerDamageDealtFlat + targetDamageTakenFlat + d);
+return (int)(p * (float)f);
+</code></pre>
+<p>After this, a dodged attack does <code>(int)Math.Max(1f, (1f - DodgeDamageReductionPercent) * dmg)</code> (<code>DodgeDamageReductionPercent</code> = 0.75), and the defender gains <code>Mathf.CeilToInt(EnergyDeltaPerHealthLost * dmg)</code> energy (<code>EnergyDeltaPerHealthLost</code> = 0.5).</p>
 </main></body></html>
