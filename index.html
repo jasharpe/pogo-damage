@@ -296,6 +296,9 @@ x = x + 1.0f;                                       // float add, before roundin
 int damage = (int)MathF.Floor(x);                    // round down to int; damage is an int
 
 // Step 5: after the formula (raids and gyms)
+// attackerPct / attackerFlat: the attacker's &quot;damage dealt&quot; modifiers (percentage / flat);
+// defenderPct / defenderFlat: the defender's &quot;damage taken&quot; modifiers (percentage / flat).
+// All four are longs sent by the server during the battle; 0 when there is none (then this step changes nothing).
 float pct  = Math.Max(0f, (float)(defenderPct + attackerPct) / 100f + 1f);   // the two percentages are longs
 long  flat = Math.Max(0L, attackerFlat + defenderFlat + damage);             // long add
 damage     = (int)(pct * (float)flat);              // long -&gt; float, float multiply, then truncate to int
@@ -358,7 +361,7 @@ int defenderEnergy = (int)MathF.Ceiling(0.5f * damage);           // round up to
 </tr>
 <tr>
 <td>Party</td>
-<td>party damage bonus, charged moves only</td>
+<td>Party Power damage bonus, charged moves only</td>
 <td>1.0 with no bonus</td>
 </tr>
 <tr>
@@ -366,8 +369,24 @@ int defenderEnergy = (int)MathF.Ceiling(0.5f * damage);           // round up to
 <td>remote raid multiplier</td>
 <td>1.0 (no effect)</td>
 </tr>
+<tr>
+<td>attackerPct, attackerFlat</td>
+<td>attacker's damage-dealt modifiers (percentage, flat)</td>
+<td>0 unless the server sends one</td>
+</tr>
+<tr>
+<td>defenderPct, defenderFlat</td>
+<td>defender's damage-taken modifiers (percentage, flat)</td>
+<td>0 unless the server sends one</td>
+</tr>
 </tbody>
 </table>
+<p>Where the modifiers come from:</p>
+<ul>
+<li>The server sends them during the battle, with each battle update. They are not in the game master, and the device does not calculate them.</li>
+<li>The four Step 5 modifiers are stat modifiers on the active attacker and on the defender, of two kinds: damage dealt and damage taken. Each is either a percentage or a flat value. A modifier stops at its expiry time. If several apply, the last one in the server's list is used; they are not added together. Which moves or features send them today is not confirmed.</li>
+<li>The Party value comes from the trainer's Party Power ability (damage dealt), also sent by the server. It applies to charged moves only and ends when its charges are used up. Its current percentage is not known.</li>
+</ul>
 <p>Rules:</p>
 <ul>
 <li>All calculations use 32-bit floats.</li>
