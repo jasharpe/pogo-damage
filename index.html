@@ -383,7 +383,7 @@ int defenderEnergy = (int)MathF.Ceiling(0.5f * damage);           // round up to
 </table>
 <p>Where the modifiers come from:</p>
 <ul>
-<li>The server sends them during the battle, with each battle update. They are not in the game master, and the device does not calculate them.</li>
+<li>The server sends them during the battle, with each battle update (message format: see <a href="#note-1-server-modifier-message">Note 1</a>). They are not in the game master, and the device does not calculate them.</li>
 <li>The four Step 5 modifiers are stat modifiers on the active attacker and on the defender, of two kinds: damage dealt and damage taken. Each is either a percentage or a flat value. A modifier stops at its expiry time. If several apply, the last one in the server's list is used; they are not added together. Which moves or features send them today is not confirmed.</li>
 <li>The Party value comes from the trainer's Party Power ability (damage dealt), also sent by the server. It applies to charged moves only and ends when its charges are used up. Its current percentage is not known.</li>
 </ul>
@@ -683,4 +683,49 @@ long  f = Math.Max(0L, attackerDamageDealtFlat + targetDamageTakenFlat + d);
 return (int)(p * (float)f);
 </code></pre>
 <p>After this, a dodged attack does <code>(int)Math.Max(1f, (1f - DodgeDamageReductionPercent) * dmg)</code> (<code>DodgeDamageReductionPercent</code> = 0.75), and the defender gains <code>Mathf.CeilToInt(EnergyDeltaPerHealthLost * dmg)</code> energy (<code>EnergyDeltaPerHealthLost</code> = 0.5).</p>
+<h2 id="notes">Notes</h2>
+<h3 id="note-1-server-modifier-message">Note 1: server modifier message</h3>
+<p>The format of the modifiers in the server's battle updates, as the app defines it (protobuf; field numbers not shown). The attacker's and the defender's <code>PokemonInfo</code> each carry a <code>stat_modifiers</code> map.</p>
+<pre><code class="language-proto">message PokemonInfo {
+  PokemonProto               pokemon;
+  int32                      current_health;
+  int32                      current_energy;
+  repeated VsActionHistory   notable_action_history;
+  map&lt;int32, StatModifierContainer&gt; stat_modifiers;   // key = StatModifierType
+  repeated VsEffectTag       vs_effect_tag;
+
+  message StatModifierContainer {
+    repeated StatModifier stat_modifier;
+
+    message StatModifier {
+      int64            value;           // the modifier amount
+      int64            expiry_time_ms;  // server time when it stops applying
+      MoveModifierType type;            // PERCENTAGE or FLAT_VALUE
+      string           string_value;
+      ExpiryType       expiry_type;     // EXPIRY_TIME or CHARGES_REMAINING
+      repeated Condition condition;     // CHARGE_MOVE and/or FAST_MOVE
+      int64            expiry_value;    // e.g. charges left (CHARGES_REMAINING)
+
+      enum ExpiryType { UNSET_EXPIRY_TYPE = 0; EXPIRY_TIME = 1; CHARGES_REMAINING = 2; }
+      enum Condition  { UNSET_CONDITION = 0; CHARGE_MOVE = 1; FAST_MOVE = 2; }
+    }
+  }
+}
+
+enum StatModifierType {          // the map key
+  UNSET_STAT_MODIFIER_TYPE = 0;
+  ATTACK_STAGE             = 1;
+  DEFENSE_STAGE            = 2;
+  DAMAGE_DEALT_DELTA       = 3;  // -&gt; attackerPct / attackerFlat
+  DAMAGE_TAKEN_DELTA       = 4;  // -&gt; defenderPct / defenderFlat
+  ARBITRARY_COUNTER        = 5;
+  PARTY_POWER_DAMAGE_DEALT = 6;  // the Party value (the trainer's Party Power)
+}
+
+enum MoveModifierType { UNSET_MOVE_MODIFIER_TYPE = 0; PERCENTAGE = 1; FLAT_VALUE = 2; }
+</code></pre>
+<ul>
+<li>Keys 3 and 4 give the four Step 5 values: <code>PERCENTAGE</code> entries give the percentage values, <code>FLAT_VALUE</code> entries the flat values. Entries whose <code>expiry_time_ms</code> has passed are not used. If several apply, the last one in the list is used.</li>
+<li>The Party value is read from key 6 in the trainer's own modifiers. It ends when a charge-limited modifier's <code>expiry_value</code> reaches 0.</li>
+</ul>
 </main></body></html>
